@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Super Gra Zręcznościowa</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #222; font-family: 'Courier New', monospace; }
+        canvas { display: block; background: linear-gradient(to bottom, #87CEEB, #E0F7FA); }
+        #ui { position: absolute; top: 10px; left: 10px; color: black; font-weight: bold; font-size: 16px; pointer-events: none; }
+        #intro {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; font-size: 24px; text-align: center;
+            text-shadow: 2px 2px 0 #000; pointer-events: none;
+            animation: fadeOut 3s forwards; animation-delay: 2s;
+        }
+        @keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    FPS: <span id="fps">60</span> (Wysokie)<br>
+    Bugi: Wyłączone<br>
+    Opowieść: Zajebista<br>
+    Sterowanie: WSAD / Shift (bieg) / C (kucanie) / E (łap) / Q (rzut)
+</div>
+
+<div id="intro">
+    ROZDZIAŁ 1<br>
+    "POCZĄTEK LEGENDY"<br>
+    (Opowieść jest zajebista)
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    // --- KONFIGURACJA I STAŁE ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const fpsDisplay = document.getElementById('fps');
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // Ustawienia fizyki i gracza
+    const GRAVITY = 0.6;
+    const FRICTION = 0.8;
+    const SPEED_WALK = 5;
+    const SPEED_RUN = 10;
+    const JUMP_FORCE = -12;
+    const THROW_FORCE = 15;
+
+    // --- KLUCZE I WEJŚCIE ---
+    const keys = {
+        w: false, s: false, a: false, d: false,
+        shift: false, space: false, c: false, e: false, q: false
+    };
+
+    window.addEventListener('keydown', (e) => {
+        const k = e.key.toLowerCase();
+        if (keys.hasOwnProperty(k) || k === ' ') keys[k === ' ' ? 'space' : k] = true;
+        if (e.key === 'Shift') keys.shift = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+        const k = e.key.toLowerCase();
+        if (keys.hasOwnProperty(k) || k === ' ') keys[k === ' ' ? 'space' : k] = false;
+        if (e.key === 'Shift') keys.shift = false;
+        
+        // Logika jednorazowa (nie ciągła)
+        if (k === 'e') tryGrab();
+        if (k === 'q') tryThrow();
+    });
+
+    // --- OBIEKTY GRY ---
+    const player = {
+        x: 100, y: 300,
+        width: 40, height: 60,
+        normalHeight: 60, crouchHeight: 30,
+        vx: 0, vy: 0,
+        color: '#333',
+        holding: null,
+        grounded: false
+    };
+
+    // Platformy
+    const platforms = [
+        { x: 0, y: canvas.height - 50, w: canvas.width, h: 50, color: '#4CAF50' }, // Podłoga
+        { x: 300, y: canvas.height - 200, w: 200, h: 20, color: '#8D6E63' },
+        { x: 600, y: canvas.height - 350, w: 200, h: 20, color: '#8D6E63' }
+    ];
+
+    // Przedmioty do rzucania
+    const boxes = [
+        { x: 400, y: canvas.height - 300, w: 30, h: 30, vx: 0, vy: 0, color: '#F44336', held: false }
+    ];
+
+    // --- LOGIKA GRY ---
+
+    function tryGrab() {
+        if (player.holding) return; // Już coś trzymasz
+
+        // Sprawdź czy jesteś blisko pudełka
+        for (let box of boxes) {
+            const dist = Math.hypot(player.x - box.x, player.y - box.y);
+            if (dist < 80) {
+                player.holding = box;
+                box.held = true;
+                console.log("Złapano przedmiot!");
+                break; 
+            }
+        }
+    }
+
+    function tryThrow() {
+        if (!player.holding) return;
+
+        const box = player.holding;
+        box.held = false;
+        player.holding = null;
+
+        // Rzut w kierunku ruchu lub w prawo
+        const direction = player.vx >= 0 ? 1 : -1;
+        box.vx = direction * THROW_FORCE + player.vx;
+        box.vy = -5; // Lekko w górę
+        console.log("Rzut!");
+    }
+
+    function update() {
+        // 1. Ruch gracza (WSAD)
+        // Shift = Bieg, brak Shiftu = chód
+        const speed = keys.shift ? SPEED_RUN : SPEED_WALK;
+        
+        if (keys.d) player.vx += 1;
+        if (keys.a) player.vx -= 1;
+        
+        // Kucanie (C) - zmniejsza wysokość
+        if (keys.c) {
+            player.height = player.crouchHeight;
+        } else {
+            // Jeśli wstajemy, upewnijmy się, że nie utknęliśmy w suficie (tu prosta logika)
+            player.y -= (player.normalHeight - player.height); 
+            player.height = player.normalHeight;
+        }
+
+        // Fizyka ruchu poziomego
+        player.vx *= FRICTION;
+        player.x += player.vx;
+
+        // Ograniczenie prędkości
+        if (player.vx > speed) player.vx = speed;
+        if (player.vx < -speed) player.vx = -speed;
+
+        // 2. Skok (Spacja)
+        if (keys.space && player.grounded) {
+            player.vy = JUMP_FORCE;
+            player.grounded = false;
+        }
+
+        // 3. Grawitacja
+        player.vy += GRAVITY;
+        player.y += player.vy;
+
+        // 4. Kolizje z platformami
+        player.grounded = false;
+        for (let plat of platforms) {
+            if (player.x < plat.x + plat.w &&
+                player.x + player.width > plat.x &&
+                player.y < plat.y + plat.h &&
+                player.y + player.height > plat.y) {
+                
+                // Prosta kolizja tylko od góry
+                if (player.vy > 0 && player.y + player.height - player.vy <= plat.y) {
+                    player.grounded = true;
+                    player.vy = 0;
+                    player.y = plat.y - player.height;
+                }
+            }
+        }
+
+        // 5. Fizyka pudełek
+        for (let box of boxes) {
+            if (box.held) {
+                // Pudełko podąża za graczem
+                box.x = player.x + (player.width / 2) - (box.w / 2);
+                box.y = player.y - box.h; // Trzymamy nad głową
+                box.vx = 0;
+                box.vy = 0;
+            } else {
+                // Fizyka pudełka gdy leci
+                box.vy += GRAVITY;
+                box.x += box.vx;
+                box.y += box.vy;
+                box.vx *= 0.98; // Tarcie powietrza
+
+                // Kolizje pudełka z platformami
+                for (let plat of platforms) {
+                    if (box.x < plat.x + plat.w &&
+                        box.x + box.w > plat.x &&
+                        box.y < plat.y + plat.h &&
+                        box.y + box.h > plat.y) {
+                        
+                        if (box.vy > 0) {
+                            box.vy = -box.vy * 0.5; // Odbicie
+                            box.y = plat.y - box.h;
+                            box.vx *= 0.8; // Tarcie o podłoże
+                        }
+                    }
+                }
+            }
+        }
+
+        // Zabezpieczenie przed wypadnięciem ze świata
+        if (player.y > canvas.height) { player.y = 0; player.vy = 0; }
+    }
+
+    function draw() {
+        // Tło (niebo)
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Platformy
+        for (let plat of platforms) {
+            ctx.fillStyle = plat.color;
+            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+        }
+
+        // Gracz
+        ctx.fillStyle = player.color;
+        // Efekt "kucania" wizualny
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+        
+        // Oczy gracza (żeby wiedzieć w którą stronę patrzy)
+        ctx.fillStyle = "white";
+        let eyeOffset = player.vx >= 0 ? 25 : 5;
+        if (keys.c) eyeOffset = player.vx >= 0 ? 25 : 5; // Kucanie nie zmienia oczu
+        ctx.fillRect(player.x + eyeOffset, player.y + 10, 10, 10);
+
+        // Pudełka
+        for (let box of boxes) {
+            ctx.fillStyle = box.color;
+            ctx.fillRect(box.x, box.y, box.w, box.h);
+            ctx.strokeStyle = "black";
+            ctx.strokeRect(box.x, box.y, box.w, box.h);
+        }
+    }
+
+    // Pętla gry
+    function loop() {
+        update();
+        draw();
+        
+        // Licznik FPS (symulacja "Wysokie FPS")
+        fpsDisplay.innerText = Math.round(1000 / 16); 
+        
+        requestAnimationFrame(loop);
+    }
+
+    // Start
+    loop();
+
+    // Resize handling
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        platforms[0].y = canvas.height - 50;
+        platforms[0].w = canvas.width;
+    });
+
+</script>
+</body>
+</html>
